@@ -1,0 +1,9 @@
+[llm]
+native_tool_calling = true
+
+[security]
+enable_security_analyzer = false
+confirmation_mode = false
+
+[agent]
+default_agent = "CodeActAgent"
