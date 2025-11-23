@@ -9,12 +9,13 @@ from tkinter import ttk
 import importlib
 import sys
 from pathlib import Path
+from system_monitor import SystemMonitor  # Import the new monitor module
 
 class LLMLauncher:
     def __init__(self, root):
         self.root = root
         self.root.title("LLM Services Launcher")
-        self.root.geometry("900x700")
+        self.root.geometry("1000x800")
         self.root.resizable(True, True)
         
         # Store process references and monitors
@@ -30,16 +31,22 @@ class LLMLauncher:
         # Configure grid weights
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(1, weight=1)
         
-        # Title
+        # Update main_frame row configuration for the new layout
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(2, weight=1) # Notebook is now at row 2, so it gets the weight
+        
+        # 1. Title (Row 0)
         title = ttk.Label(main_frame, text="🚀 LLM Services Launcher", font=('Arial', 16, 'bold'))
         title.grid(row=0, column=0, pady=(0, 10))
         
-        # Create notebook (tabbed interface)
+        # 2. System Monitor (Row 1 - New Addition)
+        self.sys_monitor = SystemMonitor(main_frame)
+        self.sys_monitor.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # 3. Create notebook/tabs (Row 2 - Moved down)
         self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.notebook.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Load all tabs dynamically
         self.load_tabs()
@@ -88,6 +95,10 @@ class LLMLauncher:
     
     def on_closing(self):
         """Clean shutdown of all processes"""
+        # Stop system monitor if needed (though destroying root usually handles it)
+        if hasattr(self, 'sys_monitor'):
+            self.sys_monitor.stop()
+
         # Stop monitoring
         for name in list(self.monitoring_active.keys()):
             self.monitoring_active[name] = False
