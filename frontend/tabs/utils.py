@@ -1,6 +1,7 @@
 """
 Shared Utilities
 Common functions used across all tabs
+Thread-Safe Version to prevent Segmentation Faults
 """
 
 import tkinter as tk
@@ -27,7 +28,7 @@ class ProcessMonitor:
             return None
         
         try:
-            cpu = self.process.cpu_percent(interval=0.1)
+            cpu = self.process.cpu_percent(interval=None) # Interval None prevents blocking
             mem = self.process.memory_info()
             mem_mb = mem.rss / 1024 / 1024
             return {
@@ -51,25 +52,58 @@ def create_log_widget(parent):
     return log
 
 def log_to_widget(widget, message):
-    """Add message to specific log widget"""
-    try:
-        widget.configure(state=tk.NORMAL)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        widget.insert(tk.END, f"[{timestamp}] {message}\n")
-        widget.see(tk.END)
-        widget.configure(state=tk.DISABLED)
-    except:
-        pass  # Widget might be destroyed
+    """
+    Thread-safe logging function.
+    Can be safely called from background threads.
+    """
+    def _update():
+        try:
+            if not widget.winfo_exists(): return
+            widget.configure(state=tk.NORMAL)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            widget.insert(tk.END, f"[{timestamp}] {message}\n")
+            widget.see(tk.END)
+            widget.configure(state=tk.DISABLED)
+        except:
+            pass
+
+    # If in main thread, run immediately. If in background, schedule it.
+    if threading.current_thread() is threading.main_thread():
+        _update()
+    else:
+        widget.after(0, _update)
 
 def clear_log(widget):
-    """Clear specific log widget"""
-    widget.configure(state=tk.NORMAL)
-    widget.delete(1.0, tk.END)
-    widget.configure(state=tk.DISABLED)
+    """Thread-safe clear log"""
+    def _clear():
+        try:
+            if not widget.winfo_exists(): return
+            widget.configure(state=tk.NORMAL)
+            widget.delete(1.0, tk.END)
+            widget.configure(state=tk.DISABLED)
+        except:
+            pass
+
+    if threading.current_thread() is threading.main_thread():
+        _clear()
+    else:
+        widget.after(0, _clear)
 
 def update_monitor_display(launcher, name, stats_labels):
-    """Update process monitoring display"""
+    """
+    Update process monitoring display.
+    Calculates in thread, updates GUI via .after()
+    """
+    # Initialize CPU percent for the first interval
+    if name in launcher.processes:
+        try:
+            p = psutil.Process(launcher.processes[name].pid)
+            p.cpu_percent(interval=None)
+        except: pass
+
     while launcher.monitoring_active.get(name, False):
+        s_text, c_text, m_text = "Status: Not Started", "CPU: N/A", "Memory: N/A"
+        
         try:
             if name in launcher.processes:
                 process = launcher.processes[name]
@@ -80,24 +114,32 @@ def update_monitor_display(launcher, name, stats_labels):
                     
                     stats = launcher.monitors[name].get_stats()
                     if stats:
-                        stats_labels['status'].config(text=f"Status: Running (PID: {pid})")
-                        stats_labels['cpu'].config(text=f"CPU: {stats['cpu']:.1f}%")
-                        stats_labels['memory'].config(text=f"Memory: {stats['memory_mb']:.1f} MB")
+                        s_text = f"Status: Running (PID: {pid})"
+                        c_text = f"CPU: {stats['cpu']:.1f}%"
+                        m_text = f"Memory: {stats['memory_mb']:.1f} MB"
                     else:
-                        stats_labels['status'].config(text="Status: Stopped")
-                        stats_labels['cpu'].config(text="CPU: N/A")
-                        stats_labels['memory'].config(text="Memory: N/A")
+                        s_text = "Status: Stopped"
                 else:
-                    stats_labels['status'].config(text="Status: Stopped")
-                    stats_labels['cpu'].config(text="CPU: N/A")
-                    stats_labels['memory'].config(text="Memory: N/A")
-            else:
-                stats_labels['status'].config(text="Status: Not Started")
-                stats_labels['cpu'].config(text="CPU: N/A")
-                stats_labels['memory'].config(text="Memory: N/A")
-        except Exception as e:
-            pass  # Suppress monitoring errors
+                    s_text = "Status: Stopped"
+        except Exception:
+            pass 
         
+        # Define the GUI update function
+        def _update_gui(s, c, m):
+            try:
+                if not stats_labels['status'].winfo_exists(): return
+                stats_labels['status'].config(text=s)
+                stats_labels['cpu'].config(text=c)
+                stats_labels['memory'].config(text=m)
+            except: pass
+
+        # Schedule the GUI update on the main thread
+        try:
+            # We use one of the labels to trigger .after()
+            stats_labels['status'].after(0, _update_gui, s_text, c_text, m_text)
+        except:
+            break
+
         threading.Event().wait(1.0)  # Update every second
 
 def create_monitor_frame(parent, name, launcher):
@@ -156,7 +198,8 @@ def run_command(launcher, name, command, log_widget, start_btn, stop_btn, kill_b
             # Read output line by line
             try:
                 for line in process.stdout:
-                    if line.strip():
+                    if line:
+                        # log_to_widget now handles thread safety internally
                         log_to_widget(log_widget, line.rstrip())
             except Exception as e:
                 log_to_widget(log_widget, f"Stream reading error: {e}")
@@ -188,12 +231,17 @@ def run_command(launcher, name, command, log_widget, start_btn, stop_btn, kill_b
                 del launcher.monitors[name]
             
             # Re-enable buttons safely
-            try:
-                start_btn.configure(state=tk.NORMAL)
-                stop_btn.configure(state=tk.DISABLED)
-                kill_btn.configure(state=tk.DISABLED)
-            except:
-                pass
+            def reset_buttons():
+                try:
+                    start_btn.configure(state=tk.NORMAL)
+                    stop_btn.configure(state=tk.DISABLED)
+                    kill_btn.configure(state=tk.DISABLED)
+                except:
+                    pass
+            
+            # Schedule button reset on main thread
+            if start_btn.winfo_exists():
+                start_btn.after(0, reset_buttons)
     
     # Run in isolated daemon thread
     thread = threading.Thread(target=run, daemon=True)
