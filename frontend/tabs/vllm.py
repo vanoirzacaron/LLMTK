@@ -29,7 +29,7 @@ def create_tab(notebook, launcher):
     info_frame = ttk.LabelFrame(left_frame, text="Server Information", padding="10")
     info_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
     
-    ttk.Label(info_frame, text="Model: DeepSeek-R1-Distill-Qwen-7B-AWQ").pack(anchor=tk.W)
+    ttk.Label(info_frame, text="Model: Qwen2.5-Coder-7B-Instruct-AWQ").pack(anchor=tk.W)
     ttk.Label(info_frame, text="Host: 0.0.0.0:8000").pack(anchor=tk.W)
     ttk.Label(info_frame, text="API Key: sk-vllm-local-abc123xyz789-qwen-coder").pack(anchor=tk.W)
     
@@ -97,7 +97,7 @@ def start_vllm(launcher, log_widget, start_btn, stop_btn, kill_btn):
     command = f"""
 source {vllm_path}/.venv/bin/activate
 echo "Virtual environment activated"
-vllm serve casperhansen/deepseek-r1-distill-qwen-7b-awq \
+vllm serve Qwen/Qwen2.5-Coder-7B-Instruct-AWQ \
   --host 0.0.0.0 \
   --port 8000 \
   --quantization awq_marlin \
