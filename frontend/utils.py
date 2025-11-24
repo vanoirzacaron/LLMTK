@@ -51,7 +51,7 @@ def create_log_widget(parent):
     )
     return log
 
-def log_to_widget(widget, message):
+def log_to_widget(widget, message, is_realtime=False):
     '''
     Thread-safe logging function.
     Can be safely called from background threads.
@@ -61,7 +61,13 @@ def log_to_widget(widget, message):
             if not widget.winfo_exists(): return
             widget.configure(state=tk.NORMAL)
             timestamp = datetime.now().strftime("%H:%M:%S")
-            widget.insert(tk.END, f"[{timestamp}] {message}\n")
+            
+            # If it's a realtime stream, don't add a timestamp to each line
+            if is_realtime:
+                widget.insert(tk.END, message)
+            else:
+                widget.insert(tk.END, f"[{timestamp}] {message}\n")
+            
             widget.see(tk.END)
             widget.configure(state=tk.DISABLED)
         except:
@@ -163,8 +169,8 @@ def create_monitor_frame(parent, name, launcher):
     
     return monitor_frame
 
-def run_command(launcher, name, command, log_fn, start_btn=None, stop_btn=None, kill_btn=None, cwd=None, on_success=None, on_error=None):
-    """Run command in a separate thread with optional callbacks"""
+def run_command(launcher, name, command, log_fn, widget, start_btn=None, stop_btn=None, kill_btn=None, cwd=None, on_success=None, on_error=None):
+    """Run command in a separate thread with real-time output"""
     def run():
         process = None
         try:
@@ -173,30 +179,38 @@ def run_command(launcher, name, command, log_fn, start_btn=None, stop_btn=None, 
             process = subprocess.Popen(
                 ["/bin/bash", "-c", command],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT, # Merge stdout and stderr
                 text=True,
+                bufsize=1, # Line-buffered
                 cwd=cwd,
                 preexec_fn=os.setsid
             )
             
             launcher.processes[name] = process
+
+            # Real-time output reading
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    log_fn(line, is_realtime=True)
+                process.stdout.close()
             
-            stdout, stderr = process.communicate()
-            
+            process.wait()
+
             if process.returncode == 0:
                 log_fn(f'{name} completed successfully.')
                 if on_success:
-                    log_fn.after(0, on_success, stdout)
+                    # Assuming on_success does not need stdout anymore
+                    widget.after(0, on_success, "")
             else:
-                error_message = stderr or f"Exited with code {process.returncode}"
-                log_fn(f"ERROR in {name}: {error_message}")
+                error_message = f"{name} exited with code {process.returncode}"
+                log_fn(f"ERROR: {error_message}")
                 if on_error:
-                    log_fn.after(0, on_error, error_message)
+                    widget.after(0, on_error, error_message)
 
         except Exception as e:
             log_fn(f"EXCEPTION in {name}: {e}")
             if on_error:
-                log_fn.after(0, on_error, str(e))
+                widget.after(0, on_error, str(e))
         
         finally:
             if name in launcher.processes:
@@ -205,12 +219,18 @@ def run_command(launcher, name, command, log_fn, start_btn=None, stop_btn=None, 
             if start_btn:
                 def reset_buttons():
                     try:
-                        start_btn.configure(state=tk.NORMAL)
-                        if stop_btn: stop_btn.configure(state=tk.DISABLED)
-                        if kill_btn: kill_btn.configure(state=tk.DISABLED)
+                        if start_btn.winfo_exists():
+                            start_btn.configure(state=tk.NORMAL)
+                        if stop_btn and stop_btn.winfo_exists():
+                            stop_btn.configure(state=tk.DISABLED)
+                        if kill_btn and kill_btn.winfo_exists():
+                            kill_btn.configure(state=tk.DISABLED)
                     except tk.TclError:
                         pass # Widget might be destroyed
-                start_btn.after(0, reset_buttons)
+                
+                # Ensure we are on the main thread to update UI
+                if widget and widget.winfo_exists():
+                    widget.after(0, reset_buttons)
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()

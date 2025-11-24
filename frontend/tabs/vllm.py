@@ -33,8 +33,8 @@ def create_tab(notebook, launcher):
     vllm_log = create_log_widget(log_frame)
     vllm_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-    def log_message(message):
-        log_to_widget(vllm_log, message)
+    def log_message(message, is_realtime=False):
+        log_to_widget(vllm_log, message, is_realtime)
         launcher.log_to_global("vLLM", message)
 
     # Info section
@@ -52,7 +52,7 @@ def create_tab(notebook, launcher):
     vllm_start_btn = ttk.Button(
         button_frame,
         text="▶ Start Server",
-        command=lambda: start_vllm(launcher, log_message, vllm_start_btn, vllm_stop_btn, vllm_kill_btn),
+        command=lambda: start_vllm(launcher, log_message, vllm_log, vllm_start_btn, vllm_stop_btn, vllm_kill_btn),
         width=15
     )
     vllm_start_btn.pack(side=tk.LEFT, padx=5)
@@ -88,7 +88,7 @@ def create_tab(notebook, launcher):
     
     log_message("vLLM Server ready to start")
 
-def start_vllm(launcher, log_fn, start_btn, stop_btn, kill_btn):
+def start_vllm(launcher, log_fn, widget, start_btn, stop_btn, kill_btn):
     """Start vLLM server"""
     vllm_path = Path.home() / "LLMTK" / "vllm"
     
@@ -113,7 +113,7 @@ vllm serve Qwen/Qwen2.5-Coder-7B-Instruct-AWQ \
     start_btn.configure(state=tk.DISABLED)
     stop_btn.configure(state=tk.NORMAL)
     kill_btn.configure(state=tk.NORMAL)
-    run_command(launcher, "vLLM", command, log_fn, start_btn, 
+    run_command(launcher, "vLLM", command, log_fn, widget, start_btn, 
                 stop_btn, kill_btn, cwd=str(vllm_path))
 
 def stop_vllm(launcher, log_fn):

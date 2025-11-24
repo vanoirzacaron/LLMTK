@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 import os
 import signal
+import subprocess
 from utils import create_log_widget, log_to_widget, clear_log, run_command, create_monitor_frame
 
 def create_tab(notebook, launcher):
@@ -32,8 +33,8 @@ def create_tab(notebook, launcher):
     oh_log = create_log_widget(log_frame)
     oh_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-    def log_message(message):
-        log_to_widget(oh_log, message)
+    def log_message(message, is_realtime=False):
+        log_to_widget(oh_log, message, is_realtime)
         launcher.log_to_global("OpenHands", message)
 
     # Info section
@@ -51,7 +52,7 @@ def create_tab(notebook, launcher):
     oh_start_btn = ttk.Button(
         button_frame,
         text="▶ Start Agent",
-        command=lambda: start_openhands(launcher, log_message, oh_start_btn, oh_stop_btn, oh_kill_btn),
+        command=lambda: start_openhands(launcher, log_message, oh_log, oh_start_btn, oh_stop_btn, oh_kill_btn),
         width=15
     )
     oh_start_btn.pack(side=tk.LEFT, padx=5)
@@ -87,7 +88,7 @@ def create_tab(notebook, launcher):
     
     log_message("OpenHands ready to start")
 
-def start_openhands(launcher, log_fn, start_btn, stop_btn, kill_btn):
+def start_openhands(launcher, log_fn, widget, start_btn, stop_btn, kill_btn):
     """Start OpenHands"""
     
     # --- START FIX: Cleanup old container before starting ---
@@ -110,7 +111,7 @@ def start_openhands(launcher, log_fn, start_btn, stop_btn, kill_btn):
     start_btn.configure(state=tk.DISABLED)
     stop_btn.configure(state=tk.NORMAL)
     kill_btn.configure(state=tk.NORMAL)
-    run_command(launcher, "OpenHands", command, log_fn, start_btn,
+    run_command(launcher, "OpenHands", command, log_fn, widget, start_btn,
                 stop_btn, kill_btn)
 
 def stop_openhands(launcher, log_fn):
