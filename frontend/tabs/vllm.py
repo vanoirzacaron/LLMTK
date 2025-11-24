@@ -25,6 +25,18 @@ def create_tab(notebook, launcher):
     left_frame.columnconfigure(0, weight=1)
     left_frame.rowconfigure(2, weight=1)
     
+    # Log section
+    log_frame = ttk.LabelFrame(left_frame, text="Server Log", padding="5")
+    log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    log_frame.columnconfigure(0, weight=1)
+    log_frame.rowconfigure(0, weight=1)
+    vllm_log = create_log_widget(log_frame)
+    vllm_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+    def log_message(message):
+        log_to_widget(vllm_log, message)
+        launcher.log_to_global("vLLM", message)
+
     # Info section
     info_frame = ttk.LabelFrame(left_frame, text="Server Information", padding="10")
     info_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -40,7 +52,7 @@ def create_tab(notebook, launcher):
     vllm_start_btn = ttk.Button(
         button_frame,
         text="▶ Start Server",
-        command=lambda: start_vllm(launcher, vllm_log, vllm_start_btn, vllm_stop_btn, vllm_kill_btn),
+        command=lambda: start_vllm(launcher, log_message, vllm_start_btn, vllm_stop_btn, vllm_kill_btn),
         width=15
     )
     vllm_start_btn.pack(side=tk.LEFT, padx=5)
@@ -48,7 +60,7 @@ def create_tab(notebook, launcher):
     vllm_stop_btn = ttk.Button(
         button_frame,
         text="⏹ Stop Server",
-        command=lambda: stop_vllm(launcher, vllm_log),
+        command=lambda: stop_vllm(launcher, log_message),
         state=tk.DISABLED,
         width=15
     )
@@ -57,7 +69,7 @@ def create_tab(notebook, launcher):
     vllm_kill_btn = ttk.Button(
         button_frame,
         text="⚠️ Force Kill",
-        command=lambda: kill_vllm(launcher, vllm_log),
+        command=lambda: kill_vllm(launcher, log_message),
         state=tk.DISABLED,
         width=15
     )
@@ -70,28 +82,19 @@ def create_tab(notebook, launcher):
         width=12
     ).pack(side=tk.LEFT, padx=5)
     
-    # Log section
-    log_frame = ttk.LabelFrame(left_frame, text="Server Log", padding="5")
-    log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-    log_frame.columnconfigure(0, weight=1)
-    log_frame.rowconfigure(0, weight=1)
-    
-    vllm_log = create_log_widget(log_frame)
-    vllm_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-    
     # Right side - Monitor
     vllm_monitor = create_monitor_frame(vllm_tab, "vLLM", launcher)
     vllm_monitor.grid(row=0, column=1, sticky=(tk.N, tk.E, tk.W))
     
-    log_to_widget(vllm_log, "vLLM Server ready to start")
+    log_message("vLLM Server ready to start")
 
-def start_vllm(launcher, log_widget, start_btn, stop_btn, kill_btn):
+def start_vllm(launcher, log_fn, start_btn, stop_btn, kill_btn):
     """Start vLLM server"""
     vllm_path = Path.home() / "LLMTK" / "vllm"
     
     if not vllm_path.exists():
-        log_to_widget(log_widget, "ERROR: vLLM directory not found!")
-        log_to_widget(log_widget, f"Expected path: {vllm_path}")
+        log_fn("ERROR: vLLM directory not found!")
+        log_fn(f"Expected path: {vllm_path}")
         return
     
     command = f"""
@@ -110,22 +113,22 @@ vllm serve Qwen/Qwen2.5-Coder-7B-Instruct-AWQ \
     start_btn.configure(state=tk.DISABLED)
     stop_btn.configure(state=tk.NORMAL)
     kill_btn.configure(state=tk.NORMAL)
-    run_command(launcher, "vLLM", command, log_widget, start_btn, 
+    run_command(launcher, "vLLM", command, log_fn, start_btn, 
                 stop_btn, kill_btn, cwd=str(vllm_path))
 
-def stop_vllm(launcher, log_widget):
+def stop_vllm(launcher, log_fn):
     """Stop vLLM server gracefully"""
     if "vLLM" in launcher.processes:
-        log_to_widget(log_widget, "Sending SIGTERM (graceful shutdown)...")
+        log_fn("Sending SIGTERM (graceful shutdown)...")
         try:
             os.killpg(os.getpgid(launcher.processes["vLLM"].pid), signal.SIGTERM)
         except:
             launcher.processes["vLLM"].terminate()
 
-def kill_vllm(launcher, log_widget):
+def kill_vllm(launcher, log_fn):
     """Force kill vLLM server"""
     if "vLLM" in launcher.processes:
-        log_to_widget(log_widget, "⚠️ FORCE KILLING PROCESS...")
+        log_fn("⚠️ FORCE KILLING PROCESS...")
         try:
             os.killpg(os.getpgid(launcher.processes["vLLM"].pid), signal.SIGKILL)
         except:

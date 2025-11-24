@@ -24,6 +24,18 @@ def create_tab(notebook, launcher):
     left_frame.columnconfigure(0, weight=1)
     left_frame.rowconfigure(2, weight=1)
     
+    # Log section
+    log_frame = ttk.LabelFrame(left_frame, text="Agent Log", padding="5")
+    log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    log_frame.columnconfigure(0, weight=1)
+    log_frame.rowconfigure(0, weight=1)
+    oh_log = create_log_widget(log_frame)
+    oh_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+    def log_message(message):
+        log_to_widget(oh_log, message)
+        launcher.log_to_global("OpenHands", message)
+
     # Info section
     info_frame = ttk.LabelFrame(left_frame, text="Agent Information", padding="10")
     info_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -39,7 +51,7 @@ def create_tab(notebook, launcher):
     oh_start_btn = ttk.Button(
         button_frame,
         text="▶ Start Agent",
-        command=lambda: start_openhands(launcher, oh_log, oh_start_btn, oh_stop_btn, oh_kill_btn),
+        command=lambda: start_openhands(launcher, log_message, oh_start_btn, oh_stop_btn, oh_kill_btn),
         width=15
     )
     oh_start_btn.pack(side=tk.LEFT, padx=5)
@@ -47,7 +59,7 @@ def create_tab(notebook, launcher):
     oh_stop_btn = ttk.Button(
         button_frame,
         text="⏹ Stop Agent",
-        command=lambda: stop_openhands(launcher, oh_log),
+        command=lambda: stop_openhands(launcher, log_message),
         state=tk.DISABLED,
         width=15
     )
@@ -56,7 +68,7 @@ def create_tab(notebook, launcher):
     oh_kill_btn = ttk.Button(
         button_frame,
         text="⚠️ Force Kill",
-        command=lambda: kill_openhands(launcher, oh_log),
+        command=lambda: kill_openhands(launcher, log_message),
         state=tk.DISABLED,
         width=15
     )
@@ -69,26 +81,17 @@ def create_tab(notebook, launcher):
         width=12
     ).pack(side=tk.LEFT, padx=5)
     
-    # Log section
-    log_frame = ttk.LabelFrame(left_frame, text="Agent Log", padding="5")
-    log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-    log_frame.columnconfigure(0, weight=1)
-    log_frame.rowconfigure(0, weight=1)
-    
-    oh_log = create_log_widget(log_frame)
-    oh_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-    
     # Right side - Monitor
     oh_monitor = create_monitor_frame(oh_tab, "OpenHands", launcher)
     oh_monitor.grid(row=0, column=1, sticky=(tk.N, tk.E, tk.W))
     
-    log_to_widget(oh_log, "OpenHands ready to start")
+    log_message("OpenHands ready to start")
 
-def start_openhands(launcher, log_widget, start_btn, stop_btn, kill_btn):
+def start_openhands(launcher, log_fn, start_btn, stop_btn, kill_btn):
     """Start OpenHands"""
     
     # --- START FIX: Cleanup old container before starting ---
-    log_to_widget(log_widget, "🧹 Cleaning up any stale 'openhands-app' containers...")
+    log_fn("🧹 Cleaning up any stale 'openhands-app' containers...")
     try:
         # This runs 'docker rm -f openhands-app' silently
         subprocess.run(
@@ -97,9 +100,9 @@ def start_openhands(launcher, log_widget, start_btn, stop_btn, kill_btn):
             stderr=subprocess.DEVNULL,
             check=False # Don't crash if container doesn't exist
         )
-        log_to_widget(log_widget, "✅ Cleanup complete.")
+        log_fn("✅ Cleanup complete.")
     except Exception as e:
-        log_to_widget(log_widget, f"⚠️ Warning: Container cleanup failed: {e}")
+        log_fn(f"⚠️ Warning: Container cleanup failed: {e}")
     # --- END FIX ---
 
     command = "uvx --python 3.12 openhands serve"
@@ -107,10 +110,10 @@ def start_openhands(launcher, log_widget, start_btn, stop_btn, kill_btn):
     start_btn.configure(state=tk.DISABLED)
     stop_btn.configure(state=tk.NORMAL)
     kill_btn.configure(state=tk.NORMAL)
-    run_command(launcher, "OpenHands", command, log_widget, start_btn,
+    run_command(launcher, "OpenHands", command, log_fn, start_btn,
                 stop_btn, kill_btn)
 
-def stop_openhands(launcher, log_widget):
+def stop_openhands(launcher, log_fn):
     """Stop OpenHands gracefully"""
     
     # Optional: Also ensure the container is killed on stop
@@ -121,13 +124,13 @@ def stop_openhands(launcher, log_widget):
         pass
 
     if "OpenHands" in launcher.processes:
-        log_to_widget(log_widget, "Sending SIGTERM (graceful shutdown)...")
+        log_fn("Sending SIGTERM (graceful shutdown)...")
         try:
             os.killpg(os.getpgid(launcher.processes["OpenHands"].pid), signal.SIGTERM)
         except:
             launcher.processes["OpenHands"].terminate()
 
-def kill_openhands(launcher, log_widget):
+def kill_openhands(launcher, log_fn):
     """Force kill OpenHands"""
     
     # Optional: Force kill the container directly here too
@@ -138,7 +141,7 @@ def kill_openhands(launcher, log_widget):
         pass
 
     if "OpenHands" in launcher.processes:
-        log_to_widget(log_widget, "⚠️ FORCE KILLING PROCESS...")
+        log_fn("⚠️ FORCE KILLING PROCESS...")
         try:
             os.killpg(os.getpgid(launcher.processes["OpenHands"].pid), signal.SIGKILL)
         except:

@@ -23,6 +23,7 @@ class LLMLauncher:
         self.monitor_threads = {}
         self.monitoring_active = {}
         self.panels = []
+        self.global_log_panel = None
         
         # Main frame
         main_frame = ttk.Frame(root, padding="10")
@@ -85,6 +86,10 @@ class LLMLauncher:
                     panel_widget = module.create_panel(parent, self)
                     panel_widget.pack(side="top", fill="x", expand=True, padx=2, pady=2)
                     self.panels.append(panel_widget)
+
+                    if module_name == "global_log":
+                        self.global_log_panel = panel_widget
+
                 else:
                     print(f"Warning: {module_name}.py missing create_panel() function")
                     
@@ -92,6 +97,11 @@ class LLMLauncher:
                 print(f"Error loading panel {module_name}: {e}")
                 import traceback
                 traceback.print_exc()
+
+    def log_to_global(self, source_tab, message):
+        """Send a log message to the global log panel if it exists."""
+        if self.global_log_panel and hasattr(self.global_log_panel, 'add_log'):
+            self.global_log_panel.add_log(source_tab, message)
 
     def load_tabs(self):
         """Dynamically load all tab modules from the tabs directory"""

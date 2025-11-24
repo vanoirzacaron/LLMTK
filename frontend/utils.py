@@ -163,12 +163,12 @@ def create_monitor_frame(parent, name, launcher):
     
     return monitor_frame
 
-def run_command(launcher, name, command, log_widget, start_btn=None, stop_btn=None, kill_btn=None, cwd=None, on_success=None, on_error=None):
+def run_command(launcher, name, command, log_fn, start_btn=None, stop_btn=None, kill_btn=None, cwd=None, on_success=None, on_error=None):
     """Run command in a separate thread with optional callbacks"""
     def run():
         process = None
         try:
-            log_to_widget(log_widget, f'STARTING {name}: {command}')
+            log_fn(f'STARTING {name}: {command}')
             
             process = subprocess.Popen(
                 ["/bin/bash", "-c", command],
@@ -184,19 +184,19 @@ def run_command(launcher, name, command, log_widget, start_btn=None, stop_btn=No
             stdout, stderr = process.communicate()
             
             if process.returncode == 0:
-                log_to_widget(log_widget, f'{name} completed successfully.')
+                log_fn(f'{name} completed successfully.')
                 if on_success:
-                    log_widget.after(0, on_success, stdout)
+                    log_fn.after(0, on_success, stdout)
             else:
                 error_message = stderr or f"Exited with code {process.returncode}"
-                log_to_widget(log_widget, f"ERROR in {name}: {error_message}")
+                log_fn(f"ERROR in {name}: {error_message}")
                 if on_error:
-                    log_widget.after(0, on_error, error_message)
+                    log_fn.after(0, on_error, error_message)
 
         except Exception as e:
-            log_to_widget(log_widget, f"EXCEPTION in {name}: {e}")
+            log_fn(f"EXCEPTION in {name}: {e}")
             if on_error:
-                log_widget.after(0, on_error, str(e))
+                log_fn.after(0, on_error, str(e))
         
         finally:
             if name in launcher.processes:
