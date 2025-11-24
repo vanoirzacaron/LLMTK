@@ -21,9 +21,11 @@ except ImportError:
     GPUtil = None
 
 class SystemMonitor(ttk.Frame):
-    def __init__(self, parent, interval=1000):
+    def __init__(self, parent, launcher=None, interval=1000):
         super().__init__(parent, padding="2")
+        self.launcher = launcher
         self.interval = interval
+        self.after_id = None
         self.last_time = time.time()
         self.last_net_io = psutil.net_io_counters()
         try:
@@ -253,4 +255,14 @@ class SystemMonitor(ttk.Frame):
             
             self.last_time = curr_time
 
-        self.after(self.interval, self.update_stats)
+        self.after_id = self.after(self.interval, self.update_stats)
+
+    def stop(self):
+        if self.after_id:
+            self.after_cancel(self.after_id)
+            self.after_id = None
+
+def create_panel(parent, launcher):
+    """Creates the SystemMonitor panel."""
+    panel = SystemMonitor(parent, launcher=launcher)
+    return panel
