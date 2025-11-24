@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 import os
 import signal
-from tabs.utils import create_log_widget, log_to_widget, clear_log, run_command, create_monitor_frame
+from utils import create_log_widget, log_to_widget, clear_log, run_command, create_monitor_frame
 
 # --- CONFIGURATION ---
 TAB_TITLE = "Boiler Tab"

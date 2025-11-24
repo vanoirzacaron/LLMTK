@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk
 import subprocess
 from pathlib import Path
-from tabs.utils import create_log_widget, log_to_widget, clear_log
+from utils import create_log_widget, log_to_widget, clear_log
 
 def create_tab(notebook, launcher):
     """Create and configure the Testing tab"""

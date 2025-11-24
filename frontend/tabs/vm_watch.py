@@ -9,7 +9,7 @@ import os
 import signal
 import psutil
 import shutil
-from tabs.utils import create_log_widget, log_to_widget, clear_log, run_command
+from utils import create_log_widget, log_to_widget, clear_log, run_command
 
 # --- CONFIGURATION ---
 

@@ -8,7 +8,7 @@ from tkinter import ttk
 import os
 import signal
 from pathlib import Path
-from tabs.utils import create_log_widget, log_to_widget, clear_log, run_command, create_monitor_frame
+from utils import create_log_widget, log_to_widget, clear_log, run_command, create_monitor_frame
 
 def create_tab(notebook, launcher):
     """Create and configure the vLLM tab"""

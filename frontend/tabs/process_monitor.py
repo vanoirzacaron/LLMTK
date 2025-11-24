@@ -12,7 +12,7 @@ import os
 import signal
 import subprocess
 import shutil
-from tabs.utils import log_to_widget, create_log_widget
+from utils import log_to_widget, create_log_widget
 
 # --- CONFIGURATION ---
 UPDATE_INTERVAL_MS = 2000  # Refresh rate (2 seconds)
