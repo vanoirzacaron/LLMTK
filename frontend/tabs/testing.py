@@ -124,8 +124,9 @@ class SanityCheckTab(ttk.Frame):
         """Check if the GNOME Desktop D-Bus interface is accessible."""
         results = [("HEADER", "3. Testing GNOME Integration (for Navigation Panel)...")]
         try:
-            # A lightweight command to check if the GNOME Shell interface is active.
-            cmd = ["gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell", "--method", "org.gnome.Shell.GetWorkspaceNames"]
+            # FIX: Use the 'Eval' method, which is what the Navigation panel actually uses.
+            # This makes the test more accurate. We run a harmless JS snippet that the panel relies on.
+            cmd = ["gdbus", "call", "--session", "--dest", "org.gnome.Shell", "--object-path", "/org/gnome/Shell", "--method", "org.gnome.Shell.Eval", "global.workspace_manager.workspace_names"]
             subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=3)
             results.append(("PASS", "Successfully connected to GNOME D-Bus. Navigation panel should work."))
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -162,30 +163,29 @@ class SanityCheckTab(ttk.Frame):
     def _test_module_factories(self):
         """Dynamically import all tabs/panels and check for their factory functions."""
         results = [("HEADER", "6. Testing Application Module Integrity...")]
-        module_dirs = ["frontend/tabs", "frontend/panels"]
+        base_dir = Path(__file__).parent.parent
+        module_dirs = [base_dir / "tabs", base_dir / "panels"]
         for mod_dir in module_dirs:
             for filename in os.listdir(mod_dir):
-                if filename.endswith(".py") and filename != "__init__.py":
-                    module_name = filename[:-3]
-                    module_path = f"{mod_dir.replace('/', '.')}.{module_name}"
+                if filename.endswith(".py") and not filename.startswith("__"):
+                    module_path = mod_dir / filename
                     try:
-                        spec = importlib.util.find_spec(module_path)
-                        if spec is None:
-                            raise ImportError()
+                        spec = importlib.util.spec_from_file_location(f"module.{filename[:-3]}", module_path)
                         module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(module)
                         
-                        factory_func = "create_tab" if "tabs" in mod_dir else "create_panel"
+                        factory_func = "create_tab" if mod_dir.name == "tabs" else "create_panel"
                         if hasattr(module, factory_func):
-                            results.append(("PASS", f"Module '{module_path}' is valid and has '{factory_func}'."))
+                            results.append(("PASS", f"Module '{mod_dir.name}/{filename}' is valid and has '{factory_func}'."))
                         else:
-                            results.append(("FAIL", f"Module '{module_path}' is MISSING the required '{factory_func}' function."))
+                            results.append(("FAIL", f"Module '{mod_dir.name}/{filename}' is MISSING the required '{factory_func}' function."))
                     except Exception as e:
-                        results.append(("FAIL", f"Failed to import or validate module '{module_path}'. Error: {e}"))
+                        results.append(("FAIL", f"Failed to import or validate module '{mod_dir.name}/{filename}'. Error: {e}"))
         return results
 
 # --- Factory Function ---
 def create_tab(notebook, launcher):
     """Creates the SanityCheckTab and adds it to the notebook."""
     tab = SanityCheckTab(notebook, launcher)
+    notebook.add(tab, text=TAB_TITLE) 
     return tab

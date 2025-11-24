@@ -26,7 +26,7 @@ class LLMLauncher:
     #   - 'vllm' (priority 10) will come after 'testing'.
     #   - 'openhands' and 'infrasven' (both priority 0) will come last, alphabetically.
     TAB_ORDER = {
-        "testing": 99,         # Highest priority, appears first
+        #"testing": 99,         # Highest priority, appears first
         "vllm": 10,            # High priority
         "process_monitor": 5,  # Medium priority
         # 'openhands': 0,    # Explicitly setting to 0 is same as not listing it
