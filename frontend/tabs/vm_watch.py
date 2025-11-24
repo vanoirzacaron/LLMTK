@@ -15,7 +15,7 @@ from tabs.utils import create_log_widget, log_to_widget, clear_log, run_command
 
 TAB_TITLE = "VM Watch"
 SERVICE_ID = "VMWatchService"
-REFRESH_INTERVAL_MS = 10000  # 10 seconds
+REFRESH_INTERVAL_MS = 5000  # 5 seconds
 
 def get_launched_vms():
     """Check for running virt-viewer processes and return a set of VM names."""
@@ -23,7 +23,6 @@ def get_launched_vms():
     for proc in psutil.process_iter(['name', 'cmdline']):
         try:
             if proc.info['name'] == 'virt-viewer' and proc.info['cmdline']:
-                # Assuming the VM name is one of the command line arguments
                 launched_vms.add(proc.info['cmdline'][-1])
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
@@ -34,15 +33,15 @@ def create_tab(notebook, launcher):
     tab = ttk.Frame(notebook, padding="10")
     notebook.add(tab, text=TAB_TITLE)
 
-    refresh_var = tk.BooleanVar(value=True)
-
     tab.columnconfigure(0, weight=1)
     tab.rowconfigure(0, weight=1)
 
     main_frame = ttk.Frame(tab)
     main_frame.grid(row=0, column=0, sticky="nsew")
     main_frame.columnconfigure(0, weight=1)
-    main_frame.rowconfigure(0, weight=1)
+    main_frame.rowconfigure(0, weight=0)  # Table row (fixed)
+    main_frame.rowconfigure(1, weight=0)  # Button row (fixed)
+    main_frame.rowconfigure(2, weight=1)  # Log row (expands)
 
     table_frame = ttk.LabelFrame(main_frame, text="Available VMs", padding="5")
     table_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
@@ -50,7 +49,7 @@ def create_tab(notebook, launcher):
     table_frame.rowconfigure(0, weight=1)
 
     columns = ("id", "name", "state", "launched")
-    tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+    tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse", height=8)
     tree.grid(row=0, column=0, sticky="nsew")
 
     scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
@@ -84,26 +83,13 @@ def create_tab(notebook, launcher):
     launch_btn = ttk.Button(button_frame, text="🚀 Launch", state=tk.DISABLED, width=12)
     launch_btn.pack(side=tk.LEFT, padx=5)
 
-    refresh_btn = ttk.Button(button_frame, text="🔄 Refresh", command=lambda: list_vms(launcher, log_widget, tree), width=12)
-    refresh_btn.pack(side=tk.LEFT, padx=5)
-
-    def toggle_refresh():
-        if refresh_var.get():
-            pause_btn.config(text="⏸ Pause")
-            update_loop(launcher, log_widget, tree, refresh_var)
-        else:
-            pause_btn.config(text="▶ Resume")
-
-    pause_btn = ttk.Button(button_frame, text="⏸ Pause", command=lambda: [refresh_var.set(not refresh_var.get()), toggle_refresh()])
-    pause_btn.pack(side=tk.LEFT, padx=5)
-
     log_frame = ttk.LabelFrame(main_frame, text="Service Log", padding="5")
-    log_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    log_frame.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
     log_frame.columnconfigure(0, weight=1)
+    log_frame.rowconfigure(0, weight=1)
 
     log_widget = create_log_widget(log_frame)
-    log_widget.grid(row=0, column=0, sticky="ew")
-    log_widget.config(height=5)
+    log_widget.grid(row=0, column=0, sticky="nsew")
 
     def on_vm_select(event):
         selected = tree.selection()
@@ -135,13 +121,21 @@ def create_tab(notebook, launcher):
     launch_btn.config(command=lambda: launch_or_focus_vm(launcher, log_widget, tree))
 
     log_to_widget(log_widget, f"{TAB_TITLE} loaded successfully.")
-    update_loop(launcher, log_widget, tree, refresh_var)
+    update_loop(launcher, log_widget, tree, notebook)
 
-def update_loop(launcher, log_widget, tree, refresh_var):
-    if tree.winfo_exists() and refresh_var.get():
-        list_vms(launcher, log_widget, tree)
+def update_loop(launcher, log_widget, tree, notebook):
+    is_visible = False
+    try:
+        is_visible = notebook.winfo_exists() and notebook.tab(notebook.select(), "text") == TAB_TITLE
+    except tk.TclError:
+        is_visible = False
+
     if tree.winfo_exists():
-        tree.after(REFRESH_INTERVAL_MS, lambda: update_loop(launcher, log_widget, tree, refresh_var))
+        if is_visible:
+            list_vms(launcher, log_widget, tree)
+            tree.after(REFRESH_INTERVAL_MS, lambda: update_loop(launcher, log_widget, tree, notebook))
+        else:
+            tree.after(100, lambda: update_loop(launcher, log_widget, tree, notebook))
 
 def list_vms(launcher, log_widget, tree):
     selected_id = tree.item(tree.selection()[0])['values'][0] if tree.selection() else None
