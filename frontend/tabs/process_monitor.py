@@ -1,8 +1,17 @@
 """
-Process Monitor Tab (Fixed)
-- Fixes sorting crash on "-" VRAM values
-- Clarifies VRAM column is for Compute/CUDA only
-- Optimizes refresh rate
+Process Monitor Tab
+
+This tab provides a comprehensive, real-time view of all running processes on the system.
+It allows users to monitor resource usage (CPU, RAM, VRAM), search for specific processes,
+and terminate them securely.
+
+Key Features:
+- Real-time process listing with CPU, RAM, and NVIDIA GPU VRAM usage.
+- Robust process termination using process groups (os.killpg) to ensure child processes are also ended.
+- Efficient, non-blocking UI updates with a clean shutdown mechanism.
+- Search/filter functionality to quickly find processes by name.
+- Clickable column headers for sorting.
+- Centralized logging for all actions and potential errors.
 """
 
 import tkinter as tk
@@ -12,259 +21,251 @@ import os
 import signal
 import subprocess
 import shutil
-from utils import log_to_widget, create_log_widget, clear_log
 
-# --- CONFIGURATION ---
-UPDATE_INTERVAL_MS = 2000  # Refresh rate (2 seconds)
+# --- Constants & Configuration ---
+TAB_TITLE = "Process Monitor"
+UPDATE_INTERVAL_MS = 2000  # 2-second refresh interval for the process list.
 
-def create_tab(notebook, launcher):
-    """Create and configure the Process Monitor tab"""
-    tab = ttk.Frame(notebook, padding="10")
-    notebook.add(tab, text="Process Monitor")
-    
-    # Layout: Top (Table), Bottom (Controls/Log)
-    tab.columnconfigure(0, weight=1)
-    tab.rowconfigure(0, weight=1) # Table expands
-    tab.rowconfigure(1, weight=0) # Actions are fixed
+# --- Logging Utility ---
+def log(launcher, message, level="info"):
+    """Centralized logging helper for the Process Monitor tab."""
+    log_message = f"[{TAB_TITLE}] {message}"
+    print(log_message) # For direct console feedback.
+    if launcher and hasattr(launcher, 'log_to_global'):
+        launcher.log_to_global(TAB_TITLE, message)
 
-    # --- Top: Process Table ---
-    table_frame = ttk.LabelFrame(tab, text="Running Processes", padding="5")
-    table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-    table_frame.columnconfigure(0, weight=1)
-    table_frame.rowconfigure(0, weight=1)
+# --- Data Fetching Logic ---
 
-    # Columns configuration
-    columns = ("pid", "name", "cpu", "mem", "vram")
-    headers = {
-        "pid": "PID", 
-        "name": "Name", 
-        "cpu": "CPU %", 
-        "mem": "RAM (MB)", 
-        "vram": "VRAM (CUDA)"
-    }
-    
-    # Create Treeview
-    tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
-    tree.grid(row=0, column=0, sticky="nsew")
-    
-    # Add Scrollbar
-    scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
-    tree.configure(yscrollcommand=scrollbar.set)
-    scrollbar.grid(row=0, column=1, sticky="ns")
-    
-    # Configure Columns
-    tree.column("pid", width=60, anchor="center")
-    tree.column("name", width=200, anchor="w")
-    tree.column("cpu", width=80, anchor="center")
-    tree.column("mem", width=100, anchor="center")
-    tree.column("vram", width=100, anchor="center")
+def get_vram_usage(launcher):
+    """Fetches VRAM usage for running processes using nvidia-smi.
 
-    # State storage for sorting
-    sort_state = {col: False for col in columns}
-
-    # Bind Headers for Sorting
-    for col in columns:
-        tree.heading(col, text=headers[col], 
-                     command=lambda c=col: sort_treeview(tree, c, sort_state))
-
-    # --- Bottom: Actions and Log ---
-    bottom_frame = ttk.Frame(tab)
-    bottom_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-    bottom_frame.columnconfigure(0, weight=1)
-    bottom_frame.columnconfigure(1, weight=1)
-
-    action_frame = ttk.LabelFrame(bottom_frame, text="Actions", padding="10")
-    action_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-    
-    log_frame = ttk.LabelFrame(bottom_frame, text="Action Log", padding="5")
-    log_frame.grid(row=0, column=1, sticky="nsew")
-    log_frame.columnconfigure(0, weight=1)
-    log_frame.rowconfigure(0, weight=1)
-    
-    log_widget = create_log_widget(log_frame)
-    log_widget.grid(row=0, column=0, sticky="nsew")
-    
-    def log_message(message):
-        log_to_widget(log_widget, message)
-        launcher.log_to_global("Process Monitor", message)
-
-    # Action Controls
-    refresh_var = tk.BooleanVar(value=True)
-    
-    def toggle_refresh():
-        if refresh_var.get():
-            update_loop(tree, refresh_var, sort_state, log_message)
-            btn_pause.config(text="⏸ Pause Updates")
-            log_message("Resumed process updates.")
-        else:
-            btn_pause.config(text="▶ Resume Updates")
-            log_message("Paused process updates.")
-
-    btn_pause = ttk.Button(action_frame, text="⏸ Pause Updates", command=lambda: [refresh_var.set(not refresh_var.get()), toggle_refresh()])
-    btn_pause.pack(fill="x", pady=5)
-
-    ttk.Separator(action_frame, orient="horizontal").pack(fill="x", pady=10)
-    
-    lbl_selected = ttk.Label(action_frame, text="Selected: None", wraplength=150)
-    lbl_selected.pack(pady=5)
-
-    def on_select(event):
-        selected = tree.selection()
-        if selected:
-            item = tree.item(selected[0])
-            pid = item['values'][0]
-            name = item['values'][1]
-            lbl_selected.config(text=f"PID: {pid}\n{name}")
-        else:
-            lbl_selected.config(text="Selected: None")
-
-    tree.bind("<<TreeviewSelect>>", on_select)
-
-    btn_kill = ttk.Button(
-        action_frame, 
-        text="💀 Kill Selected", 
-        command=lambda: kill_selected_process(tree, log_message)
-    )
-    btn_kill.pack(fill="x", pady=5)
-    
-    ttk.Separator(action_frame, orient="horizontal").pack(fill="x", pady=10)
-    ttk.Label(action_frame, text="Search Name:").pack(anchor="w")
-    entry_filter = ttk.Entry(action_frame)
-    entry_filter.pack(fill="x", pady=5)
-    entry_filter.bind("<KeyRelease>", lambda e: update_loop(tree, refresh_var, sort_state, log_message, force_update=True))
-    
-    tree.filter_text = entry_filter
-
-    # Start Loop
-    log_message("Process Monitor initialized.")
-    update_loop(tree, refresh_var, sort_state, log_message)
-
-def get_vram_usage():
+    Returns:
+        dict: A mapping of {pid: vram_mb} for processes using the GPU.
+    """
     vram_map = {}
-    if shutil.which("nvidia-smi"):
-        try:
-            cmd = ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"]
-            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode('utf-8').strip()
-            
-            for line in output.splitlines():
-                if "," in line:
-                    parts = line.split(",")
-                    try:
-                        pid = int(parts[0].strip())
-                        mem = int(parts[1].strip())
-                        vram_map[pid] = mem
-                    except (ValueError, IndexError):
-                        pass
-        except subprocess.CalledProcessError:
-            pass
+    if not shutil.which("nvidia-smi"):
+        return vram_map # Return empty dict if nvidia-smi is not installed.
+
+    try:
+        cmd = ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"]
+        # Using stderr=subprocess.DEVNULL to suppress errors if no processes are using the GPU.
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode('utf-8').strip()
+        
+        for line in output.splitlines():
+            if "," in line:
+                parts = line.split(",")
+                try:
+                    pid, mem_mb = int(parts[0].strip()), int(parts[1].strip())
+                    vram_map[pid] = mem_mb
+                except (ValueError, IndexError):
+                    # Ignore malformed lines from nvidia-smi.
+                    continue
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        log(launcher, f"nvidia-smi command failed: {e}", "warn")
     return vram_map
 
-def fetch_process_data(filter_str=""):
-    data = []
-    vram_map = get_vram_usage()
+def fetch_process_data(launcher, filter_str=""):
+    """Gathers data for all running processes.
     
-    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info']):
+    Args:
+        launcher: The main application instance for logging.
+        filter_str (str): A string to filter process names by (case-insensitive).
+
+    Returns:
+        list: A list of tuples, where each tuple contains process info.
+    """
+    data = []
+    vram_map = get_vram_usage(launcher)
+    cpu_count = psutil.cpu_count()
+
+    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info', 'pgid']):
         try:
             pinfo = proc.info
             name = pinfo['name']
             
+            # Apply filter if provided
             if filter_str and filter_str.lower() not in name.lower():
                 continue
                 
-            pid = pinfo['pid']
-            cpu = pinfo['cpu_percent'] / psutil.cpu_count()
-            mem = pinfo['memory_info'].rss / (1024 * 1024)
-            vram = vram_map.get(pid, 0)
+            # Normalize CPU percentage by the number of cores.
+            cpu = pinfo['cpu_percent'] / cpu_count
+            # Convert RSS memory to MB.
+            mem_mb = pinfo['memory_info'].rss / (1024 * 1024)
             
-            data.append((pid, name, cpu, mem, vram))
+            data.append((pinfo['pid'], name, cpu, mem_mb, vram_map.get(pinfo['pid'], 0), pinfo.get('pgid')))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-            
+            # These exceptions are expected if a process terminates during iteration.
+            continue
     return data
 
-def sort_treeview(tree, col, sort_state):
-    reverse = sort_state[col] = not sort_state[col]
-    
-    data_list = [(tree.set(k, col), k) for k in tree.get_children('')]
-    
-    def convert(val):
-        if val == "-": return -1.0
-        try: return float(val)
-        except ValueError: return str(val).lower()
+# --- Core UI & Process Management Class ---
 
-    data_list.sort(key=lambda t: convert(t[0]), reverse=reverse)
+class ProcessMonitorTab(ttk.Frame):
+    """Manages the UI, data updates, and user actions for the Process Monitor."""
+    def __init__(self, parent, launcher):
+        super().__init__(parent, padding="10")
+        self.launcher = launcher
+        self._is_running = True
+        self.sort_state = {col: False for col in ("pid", "name", "cpu", "mem", "vram")} 
 
-    for index, (val, k) in enumerate(data_list):
-        tree.move(k, '', index)
+        self._setup_ui()
+        self.log("Process Monitor initialized.")
+        self.update_process_list() # Start the update loop.
+
+    def log(self, message, level="info"):
+        """Log a message using the centralized logger."""
+        log(self.launcher, message, level)
+        if hasattr(self, 'log_widget'):
+            log_to_widget(self.log_widget, message)
+
+    def _setup_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        # --- Process Table ---
+        table_frame = ttk.LabelFrame(self, text="Running Processes", padding="5")
+        table_frame.grid(row=0, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = ("pid", "name", "cpu", "mem", "vram")
+        headers = {"pid": "PID", "name": "Name", "cpu": "CPU %", "mem": "RAM (MB)", "vram": "VRAM (CUDA)"}
         
-    for c in sort_state:
-        char = " ▼" if sort_state.get(c) else " ▲"
-        clean_text = tree.heading(c, "text").replace(" ▲", "").replace(" ▼", "")
-        tree.heading(c, text=f"{clean_text}{char}" if c == col else clean_text)
-
-def update_loop(tree, refresh_var, sort_state, log_fn, force_update=False):
-    if not tree.winfo_exists(): return
-    if not refresh_var.get() and not force_update: 
-        tree.after(500, lambda: update_loop(tree, refresh_var, sort_state, log_fn, force_update))
-        return
-
-    selected_pid = None
-    if tree.selection():
-        try: selected_pid = tree.item(tree.selection()[0])['values'][0]
-        except IndexError: pass
-
-    filter_str = tree.filter_text.get()
-    data = fetch_process_data(filter_str)
-    
-    current_selection_id = None
-    existing_pids = {tree.item(item_id)['values'][0]: item_id for item_id in tree.get_children()}
-
-    new_pids = set()
-    for item in data:
-        pid = item[0]
-        new_pids.add(pid)
-        display_vals = (pid, item[1], f"{item[2]:.1f}", f"{item[3]:.0f}", f"{item[4]}" if item[4] > 0 else "-")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        self.tree.grid(row=0, column=0, sticky="nsew")
         
-        if pid in existing_pids:
-            tree.item(existing_pids[pid], values=display_vals)
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        for col, text in headers.items():
+            self.tree.heading(col, text=text, command=lambda c=col: self.sort_treeview(c))
+            self.tree.column(col, width=80 if col != "name" else 200, anchor="center" if col != "name" else "w")
+
+        # --- Bottom Control Area ---
+        bottom_frame = ttk.Frame(self)
+        bottom_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        bottom_frame.columnconfigure(0, weight=1)
+        bottom_frame.columnconfigure(1, weight=1)
+
+        # --- Action Controls ---
+        action_frame = ttk.LabelFrame(bottom_frame, text="Actions", padding="10")
+        action_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.refresh_var = tk.BooleanVar(value=True)
+        self.btn_pause = ttk.Button(action_frame, text="⏸ Pause Updates", command=self.toggle_refresh)
+        self.btn_pause.pack(fill="x", pady=5)
+        ttk.Label(action_frame, text="Search Name:").pack(anchor="w")
+        self.entry_filter = ttk.Entry(action_frame)
+        self.entry_filter.pack(fill="x", pady=5)
+        self.entry_filter.bind("<KeyRelease>", lambda e: self.update_process_list(force=True))
+
+        # --- Termination Controls ---
+        kill_frame = ttk.LabelFrame(bottom_frame, text="Termination", padding="10")
+        kill_frame.grid(row=0, column=1, sticky="nsew")
+        self.lbl_selected = ttk.Label(kill_frame, text="Selected: None", wraplength=180)
+        self.lbl_selected.pack(pady=5, anchor="w")
+        self.btn_kill = ttk.Button(kill_frame, text="💀 Kill Selected Process Group", command=self.kill_selected_process)
+        self.btn_kill.pack(fill="x", pady=5)
+        self.tree.bind("<<TreeviewSelect>>", self.on_select)
+
+    def toggle_refresh(self):
+        """Pause or resume the automatic updates of the process list."""
+        if self.refresh_var.get():
+            self.update_process_list()
+            self.btn_pause.config(text="⏸ Pause Updates")
+            self.log("Resumed process updates.")
         else:
-            existing_pids[pid] = tree.insert("", "end", values=display_vals)
+            self.btn_pause.config(text="▶ Resume Updates")
+            self.log("Paused process updates.")
+
+    def on_select(self, event=None):
+        """Update the selection label when a process is clicked."""
+        if self.tree.selection():
+            item = self.tree.item(self.tree.selection()[0])
+            pid, name = item['values'][0], item['values'][1]
+            self.lbl_selected.config(text=f"PID: {pid}\nName: {name}")
+        else:
+            self.lbl_selected.config(text="Selected: None")
+
+    def update_process_list(self, force=False):
+        """The main update loop to refresh the process data in the treeview."""
+        if not self._is_running or not self.winfo_exists():
+            return
+        if not self.refresh_var.get() and not force:
+            self.after(500, self.update_process_list)
+            return
+
+        filter_str = self.entry_filter.get()
+        process_data = fetch_process_data(self.launcher, filter_str)
         
-        if pid == selected_pid:
-            current_selection_id = existing_pids[pid]
+        # Efficiently update the treeview without rebuilding it
+        existing_pids = {self.tree.item(item_id)['values'][0]: item_id for item_id in self.tree.get_children()}
+        current_pids = set()
 
-    for pid, item_id in list(existing_pids.items()):
-        if pid not in new_pids:
-            tree.delete(item_id)
-    
-    if current_selection_id:
-        tree.selection_set(current_selection_id)
-        tree.see(current_selection_id)
-    
-    # Re-sort if a column header is active
-    for col, is_rev in sort_state.items():
-        if tree.heading(col, 'text').endswith(("▲", "▼")):
-            sort_treeview(tree, col, {c: (not r if c==col else r) for c,r in sort_state.items()}) # Toggle and sort
-            break
+        for item in process_data:
+            pid, name, cpu, mem, vram, pgid = item
+            current_pids.add(pid)
+            display_vals = (pid, name, f"{cpu:.1f}", f"{mem:.0f}", f"{vram}" if vram > 0 else "-")
+            
+            if pid in existing_pids:
+                self.tree.item(existing_pids[pid], values=display_vals, tags=(pgid,))
+            else:
+                self.tree.insert("", "end", values=display_vals, tags=(pgid,))
 
-    if refresh_var.get():
-        tree.after(UPDATE_INTERVAL_MS, lambda: update_loop(tree, refresh_var, sort_state, log_fn))
+        # Remove processes that no longer exist
+        pids_to_remove = set(existing_pids.keys()) - current_pids
+        for pid in pids_to_remove:
+            self.tree.delete(existing_pids[pid])
 
-def kill_selected_process(tree, log_fn):
-    if not tree.selection():
-        log_fn("No process selected to kill.")
-        return
+        if self.refresh_var.get():
+            self.after(UPDATE_INTERVAL_MS, self.update_process_list)
 
-    item = tree.item(tree.selection()[0])
-    pid, name = item['values'][0], item['values'][1]
-    
-    try:
-        process = psutil.Process(pid)
-        process.terminate()
-        log_fn(f"Sent SIGTERM to process {name} (PID: {pid}).")
-    except psutil.NoSuchProcess:
-        log_fn(f"Error: Process {name} (PID: {pid}) not found.")
-    except psutil.AccessDenied:
-        log_fn(f"Error: Access denied to kill {name} (PID: {pid}).")
-    except Exception as e:
-        log_fn(f"An unexpected error occurred: {e}")
+    def kill_selected_process(self):
+        """Terminates the entire process group of the selected process."""
+        selection = self.tree.selection()
+        if not selection:
+            self.log("No process selected to kill.", "warn")
+            return
+
+        item = self.tree.item(selection[0])
+        pid, name, pgid = item['values'][0], item['values'][1], item['tags'][0]
+
+        try:
+            pgid_to_kill = int(pgid)
+            self.log(f"Attempting to kill process group {name} (PGID: {pgid_to_kill})...")
+            # Using os.killpg is more robust as it terminates the process and its children.
+            os.killpg(pgid_to_kill, signal.SIGKILL)
+            self.log(f"Successfully sent SIGKILL to PGID {pgid_to_kill}.")
+        except (ProcessLookupError, PermissionError) as e:
+            self.log(f"Failed to kill process group {pgid_to_kill}: {e}", "error")
+        except ValueError:
+            self.log(f"Invalid PGID '{pgid}' for process {name}. Cannot kill.", "error")
+
+    def sort_treeview(self, col):
+        """Sorts the treeview column when a header is clicked."""
+        reverse = self.sort_state[col] = not self.sort_state[col]
+        
+        # Convert values to a consistent type for sorting
+        def convert(val):
+            if val == "-": return -1.0
+            try: return float(val)
+            except ValueError: return str(val).lower()
+
+        data = [(convert(self.tree.set(k, col)), k) for k in self.tree.get_children('')]
+        data.sort(key=lambda t: t[0], reverse=reverse)
+
+        for index, (val, k) in enumerate(data):
+            self.tree.move(k, '', index)
+
+    def stop(self):
+        """Cleanly stops the update loop when the tab is closed."""
+        self.log("Stopping process monitor.")
+        self._is_running = False
+
+# --- Factory Function ---
+def create_tab(notebook, launcher):
+    """Creates the ProcessMonitorTab and adds it to the notebook."""
+    tab = ProcessMonitorTab(notebook, launcher)
+    # The tab needs a `stop` method to be called by the main application on exit.
+    notebook.bind("<<NotebookTabChanged>>", lambda e: tab.stop() if notebook.select() != tab.winfo_pathname(tab.winfo_id()) else None)
+    return tab

@@ -1,6 +1,6 @@
 '''
 VM Watch Tab
-Feature to monitor and manage virtual machines.
+Feature to monitor and manage virtual machines with persistent logging.
 '''
 
 import tkinter as tk
@@ -9,13 +9,19 @@ import os
 import signal
 import psutil
 import shutil
+from datetime import datetime
 from utils import create_log_widget, log_to_widget, clear_log, run_command
 
 # --- CONFIGURATION ---
 
 TAB_TITLE = "VM Watch"
 SERVICE_ID = "VMWatchService"
-REFRESH_INTERVAL_MS = 5000  # 5 seconds
+REFRESH_INTERVAL_MS = 5000
+LOG_DIR = "logs"
+
+def get_log_filepath():
+    """Return the path to today's log file."""
+    return os.path.join(LOG_DIR, f"vm_watch_{datetime.now().strftime('%Y-%m-%d')}.log")
 
 def get_launched_vms():
     """Check for running virt-viewer processes and return a set of VM names."""
@@ -30,6 +36,12 @@ def get_launched_vms():
 
 def create_tab(notebook, launcher):
     """Create and configure the tab interface"""
+    # --- Log Directory Setup ---
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+
+    log_filepath = get_log_filepath()
+
     tab = ttk.Frame(notebook, padding="10")
     notebook.add(tab, text=TAB_TITLE)
 
@@ -39,9 +51,7 @@ def create_tab(notebook, launcher):
     main_frame = ttk.Frame(tab)
     main_frame.grid(row=0, column=0, sticky="nsew")
     main_frame.columnconfigure(0, weight=1)
-    main_frame.rowconfigure(0, weight=0)  # Table row (fixed)
-    main_frame.rowconfigure(1, weight=0)  # Button row (fixed)
-    main_frame.rowconfigure(2, weight=1)  # Log row (expands)
+    main_frame.rowconfigure(2, weight=1)
 
     # --- Logger Setup ---
     log_frame = ttk.LabelFrame(main_frame, text="Service Log", padding="5")
@@ -51,9 +61,19 @@ def create_tab(notebook, launcher):
     log_widget = create_log_widget(log_frame)
     log_widget.grid(row=0, column=0, sticky="nsew")
 
-    def log_message(message):
-        log_to_widget(log_widget, message)
+    def log_message(message, is_realtime=False):
+        log_to_widget(log_widget, message, is_realtime)
         launcher.log_to_global(TAB_TITLE, message)
+        # Append to the persistent log file
+        with open(log_filepath, "a") as f:
+            f.write(message if is_realtime else f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
+
+    # --- Load Previous Logs ---
+    if os.path.exists(log_filepath):
+        with open(log_filepath, "r") as f:
+            log_message("--- Session Resumed ---")
+            for line in f:
+                log_to_widget(log_widget, line, is_realtime=True) # Display raw log content
 
     # --- VM Table ---
     table_frame = ttk.LabelFrame(main_frame, text="Available VMs", padding="5")
@@ -127,25 +147,20 @@ def create_tab(notebook, launcher):
     launch_btn.config(command=lambda: launch_or_focus_vm(launcher, log_message, tree))
 
     log_message(f"{TAB_TITLE} loaded. Initializing VM list...")
-    # Delay initial load to prevent blocking UI thread
     tab.after(1000, lambda: update_loop(launcher, log_message, tree, notebook))
 
 def update_loop(launcher, log_fn, tree, notebook):
     is_visible = False
     try:
-        # Check if the tab is currently selected
         is_visible = notebook.winfo_exists() and notebook.tab(notebook.select(), "text") == TAB_TITLE
     except tk.TclError:
-        # This can happen if no tab is selected yet during startup
         is_visible = False
 
     if tree.winfo_exists():
         if is_visible:
             list_vms(launcher, log_fn, tree)
-            # Schedule next update when visible
             tree.after(REFRESH_INTERVAL_MS, lambda: update_loop(launcher, log_fn, tree, notebook))
         else:
-            # Check again sooner if not visible
             tree.after(500, lambda: update_loop(launcher, log_fn, tree, notebook))
 
 def list_vms(launcher, log_fn, tree):
@@ -180,21 +195,21 @@ def list_vms(launcher, log_fn, tree):
             tree.delete(current_items[vm_name])
 
         if not tree.selection() and selected_id is not None:
-            # If the previously selected item is gone, clear button states
             tree.event_generate("<<TreeviewSelect>>")
         elif tree.selection():
             tree.event_generate("<<TreeviewSelect>>")
 
-    run_command(launcher, SERVICE_ID, 'virsh list --all', log_fn, 
+    run_command(launcher, SERVICE_ID, 'virsh list --all', log_fn, tree, 
                 on_success=on_success, 
-                on_error=lambda e: log_fn(f"Error listing VMs: {e}"))
+                on_error=lambda e: log_fn(f"Error listing VMs: {e}"),
+                capture_output=True)
 
 def vm_action(launcher, log_fn, tree, command_template):
     if not tree.selection(): return
     vm_name = tree.item(tree.selection()[0])['values'][1]
     command = command_template.format(vm_name=vm_name)
     log_fn(f"Executing: {command}")
-    run_command(launcher, f"{command.split()[0]}_{vm_name}", command, log_fn, 
+    run_command(launcher, f"{command.split()[0]}_{vm_name}", command, log_fn, tree, 
                 on_success=lambda out: log_fn(out) or list_vms(launcher, log_fn, tree),
                 on_error=lambda err: log_fn(err))
 
@@ -207,11 +222,10 @@ def launch_or_focus_vm(launcher, log_fn, tree):
         if shutil.which("wmctrl"):
             command = f'wmctrl -a "{vm_name}"'
             log_fn(f"Focusing on VM window: {vm_name}")
-            run_command(launcher, f"focus_{vm_name}", command, log_fn, on_error=lambda e: log_fn(f"Error focusing: {e}"))
+            run_command(launcher, f"focus_{vm_name}", command, log_fn, tree, on_error=lambda e: log_fn(f"Error focusing: {e}"))
         else:
             log_fn("wmctrl not found. Cannot focus window.")
     else:
         command = f'virt-viewer --domain-name {vm_name}'
         log_fn(f"Launching VM: {vm_name}")
-        # We run this detached as it's a GUI app
-        run_command(launcher, f"launch_{vm_name}", command, log_fn, on_error=lambda e: log_fn(f"Error launching: {e}"))
+        run_command(launcher, f"launch_{vm_name}", command, log_fn, tree, on_error=lambda e: log_fn(f"Error launching: {e}"))

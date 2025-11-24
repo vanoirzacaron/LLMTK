@@ -1,6 +1,18 @@
 """
 OpenHands Tab
-Manages the OpenHands agent process with monitoring
+
+This tab provides a user interface for managing the OpenHands agent, a 
+long-running background service. It allows the user to start, stop, and 
+force-kill the agent, while also providing a real-time log view and easy 
+access to the agent's web documentation.
+
+Key Features:
+- Process control (Start, Stop, Kill) for the agent.
+- Pre-start cleanup of old Docker containers.
+- Real-time log display within the tab.
+- A clickable link to the agent's documentation, with error handling.
+- System resource monitoring for the agent process.
+- Centralized logging for all actions and errors.
 """
 
 import tkinter as tk
@@ -8,142 +20,185 @@ from tkinter import ttk
 import os
 import signal
 import subprocess
+import webbrowser
+import shutil
+from pathlib import Path
+
+# Assuming utils provides these helper functions. If not, they would need to be defined.
 from utils import create_log_widget, log_to_widget, clear_log, run_command, create_monitor_frame
 
+# --- Configuration ---
+# These values are centralized for easy modification.
+TAB_TITLE = "OpenHands"
+# Path to the OpenHands project. IMPORTANT: This may need to be adjusted based on the user's setup.
+AGENT_WORKING_DIR = "../OpenHands"
+# The command to start the agent. It will be run from the AGENT_WORKING_DIR.
+AGENT_START_COMMAND = "uvx --python 3.12 openhands serve"
+# The web URL for the agent's documentation/frontend.
+AGENT_DOCS_URL = "http://localhost:3000"
+
+# --- Logging Utility ---
+def log(launcher, widget, message, level="info"):
+    """A centralized logging helper for this tab.
+
+    Args:
+        launcher: The main application instance to access the global logger.
+        widget: The local log widget to display the message.
+        message (str): The log message.
+        level (str): The log level ('info', 'warn', 'error').
+    """
+    log_message = f"[{TAB_TITLE}] {message}"
+    print(log_message) # Always print to console for debugging.
+    if launcher and hasattr(launcher, 'log_to_global'):
+        launcher.log_to_global(TAB_TITLE, message)
+    if widget:
+        log_to_widget(widget, message)
+
+# --- Core Actions ---
+
+def open_docs_url(launcher, widget):
+    """Safely opens the agent's documentation URL in a web browser."""
+    log(launcher, widget, f"Attempting to open documentation at: {AGENT_DOCS_URL}")
+    try:
+        if not webbrowser.open(AGENT_DOCS_URL):
+            raise webbrowser.Error("No browser found to open URL.")
+        log(launcher, widget, "Successfully opened documentation in browser.")
+    except webbrowser.Error as e:
+        error_msg = f"Could not open web browser: {e}"
+        log(launcher, widget, error_msg, "error")
+
+def start_service(launcher, log_fn, widget, buttons):
+    """Validates environment and starts the OpenHands agent process."""
+    start_btn, stop_btn, kill_btn = buttons
+
+    # 1. Check if the working directory exists
+    agent_path = Path(AGENT_WORKING_DIR)
+    if not agent_path.is_dir():
+        log_fn(f"Error: Working directory not found at '{agent_path.resolve()}'. Cannot start agent.", "error")
+        return
+
+    # 2. Clean up any stale Docker containers before starting.
+    if shutil.which("docker"):
+        log_fn("🧹 Cleaning up any stale 'openhands-app' containers...")
+        try:
+            # This runs 'docker rm -f openhands-app' to remove the container if it exists.
+            subprocess.run(
+                ["docker", "rm", "-f", "openhands-app"], 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL,
+                check=False, # Don't raise an exception if the container doesn't exist.
+                cwd=str(agent_path)
+            )
+            log_fn("✅ Docker cleanup complete.")
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
+            log_fn(f"⚠️ Warning: Docker container cleanup failed: {e}", "warn")
+    else:
+        log_fn("docker command not found, skipping container cleanup.", "warn")
+
+    # 3. Update UI and launch the process using the utility function.
+    start_btn.config(state=tk.DISABLED)
+    stop_btn.config(state=tk.NORMAL)
+    kill_btn.config(state=tk.NORMAL)
+    
+    log_fn(f"Starting agent with command: '{AGENT_START_COMMAND}' in '{agent_path.resolve()}'")
+    run_command(launcher, TAB_TITLE, AGENT_START_COMMAND, log_fn, widget, 
+                start_btn, stop_btn, kill_btn, cwd=str(agent_path))
+
+def stop_service(launcher, log_fn):
+    """Sends a graceful SIGTERM signal to the agent process group."""
+    if TAB_TITLE not in launcher.processes:
+        log_fn("Agent process not found. Nothing to stop.", "warn")
+        return
+
+    log_fn("Attempting graceful shutdown (sending SIGTERM)...")
+    try:
+        # Get the process group ID (pgid) to terminate the entire process tree.
+        pgid = os.getpgid(launcher.processes[TAB_TITLE].pid)
+        os.killpg(pgid, signal.SIGTERM)
+        log_fn("SIGTERM signal sent to process group.")
+    except ProcessLookupError:
+        log_fn("Process already terminated.", "warn")
+        launcher.processes.pop(TAB_TITLE, None)
+    except Exception as e:
+        log_fn(f"Error during graceful stop: {e}. Consider a force kill.", "error")
+
+def kill_service(launcher, log_fn):
+    """Forcibly terminates the agent process group with SIGKILL."""
+    if TAB_TITLE not in launcher.processes:
+        log_fn("Agent process not found. Nothing to kill.", "warn")
+        return
+
+    log_fn("⚠️ Forcibly terminating process (sending SIGKILL)...")
+    try:
+        pgid = os.getpgid(launcher.processes[TAB_TITLE].pid)
+        os.killpg(pgid, signal.SIGKILL)
+        log_fn("SIGKILL signal sent. The process has been terminated.")
+    except ProcessLookupError:
+        log_fn("Process already terminated.", "warn")
+        launcher.processes.pop(TAB_TITLE, None)
+    except Exception as e:
+        log_fn(f"Error during force kill: {e}", "error")
+
+# --- UI Setup ---
 def create_tab(notebook, launcher):
-    """Create and configure the OpenHands tab"""
-    oh_tab = ttk.Frame(notebook, padding="10")
-    notebook.add(oh_tab, text="OpenHands")
+    """Creates and lays out the OpenHands tab and its widgets."""
+    tab = ttk.Frame(notebook, padding="10")
+    notebook.add(tab, text=TAB_TITLE)
     
-    oh_tab.columnconfigure(0, weight=1)
-    oh_tab.columnconfigure(1, weight=0)
-    oh_tab.rowconfigure(2, weight=1)
+    # --- Layout Configuration ---
+    tab.columnconfigure(0, weight=1) # Main content column
+    tab.columnconfigure(1, weight=0) # Monitor column (fixed width)
+    tab.rowconfigure(2, weight=1)    # Log area row
     
-    # Left side - Info and logs
-    left_frame = ttk.Frame(oh_tab)
-    left_frame.grid(row=0, column=0, rowspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10))
+    # --- Left Frame (Info, Controls, Logs) ---
+    left_frame = ttk.Frame(tab)
+    left_frame.grid(row=0, column=0, rowspan=3, sticky="nsew", padx=(0, 10))
     left_frame.columnconfigure(0, weight=1)
     left_frame.rowconfigure(2, weight=1)
-    
-    # Log section
+
+    # --- Log Widget ---
     log_frame = ttk.LabelFrame(left_frame, text="Agent Log", padding="5")
-    log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    log_frame.grid(row=2, column=0, sticky="nsew")
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
-    oh_log = create_log_widget(log_frame)
-    oh_log.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    log_widget = create_log_widget(log_frame)
+    log_widget.grid(row=0, column=0, sticky="nsew")
 
-    def log_message(message, is_realtime=False):
-        log_to_widget(oh_log, message, is_realtime)
-        launcher.log_to_global("OpenHands", message)
+    # Create a specific logger instance for this tab
+    log_fn = lambda message, level="info": log(launcher, log_widget, message, level)
 
-    # Info section
+    # --- Info Section ---
     info_frame = ttk.LabelFrame(left_frame, text="Agent Information", padding="10")
-    info_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-    
-    ttk.Label(info_frame, text="Framework: OpenHands Agent").pack(anchor=tk.W)
-    ttk.Label(info_frame, text="Python Version: 3.12").pack(anchor=tk.W)
-    l = ttk.Label(info_frame, text="http://localhost:3000", cursor="hand2", foreground="blue"); l.bind("<Button-1>", lambda e: __import__("webbrowser").open("http://localhost:3000")); l.pack(anchor=tk.W)
+    info_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    ttk.Label(info_frame, text="Framework: OpenHands Agent").pack(anchor="w")
+    # Clickable URL label
+    url_label = ttk.Label(info_frame, text=AGENT_DOCS_URL, cursor="hand2", foreground="blue")
+    url_label.bind("<Button-1>", lambda e: open_docs_url(launcher, log_widget))
+    url_label.pack(anchor="w")
 
-    # Control buttons
+    # --- Control Buttons ---
     button_frame = ttk.Frame(left_frame)
     button_frame.grid(row=1, column=0, pady=(0, 10))
     
-    oh_start_btn = ttk.Button(
-        button_frame,
-        text="▶ Start Agent",
-        command=lambda: start_openhands(launcher, log_message, oh_log, oh_start_btn, oh_stop_btn, oh_kill_btn),
-        width=15
-    )
-    oh_start_btn.pack(side=tk.LEFT, padx=5)
-    
-    oh_stop_btn = ttk.Button(
-        button_frame,
-        text="⏹ Stop Agent",
-        command=lambda: stop_openhands(launcher, log_message),
-        state=tk.DISABLED,
-        width=15
-    )
-    oh_stop_btn.pack(side=tk.LEFT, padx=5)
-    
-    oh_kill_btn = ttk.Button(
-        button_frame,
-        text="⚠️ Force Kill",
-        command=lambda: kill_openhands(launcher, log_message),
-        state=tk.DISABLED,
-        width=15
-    )
-    oh_kill_btn.pack(side=tk.LEFT, padx=5)
-    
-    ttk.Button(
-        button_frame,
-        text="🗑️ Clear Log",
-        command=lambda: clear_log(oh_log),
-        width=12
-    ).pack(side=tk.LEFT, padx=5)
-    
-    # Right side - Monitor
-    oh_monitor = create_monitor_frame(oh_tab, "OpenHands", launcher)
-    oh_monitor.grid(row=0, column=1, sticky=(tk.N, tk.E, tk.W))
-    
-    log_message("OpenHands ready to start")
+    start_btn = ttk.Button(button_frame, text="▶ Start Agent", width=15)
+    stop_btn = ttk.Button(button_frame, text="⏹ Stop Agent", state=tk.DISABLED, width=15)
+    kill_btn = ttk.Button(button_frame, text="⚠️ Force Kill", state=tk.DISABLED, width=15)
+    clear_btn = ttk.Button(button_frame, text="🗑️ Clear Log", width=12)
 
-def start_openhands(launcher, log_fn, widget, start_btn, stop_btn, kill_btn):
-    """Start OpenHands"""
+    start_btn.pack(side=tk.LEFT, padx=5)
+    stop_btn.pack(side=tk.LEFT, padx=5)
+    kill_btn.pack(side=tk.LEFT, padx=5)
+    clear_btn.pack(side=tk.LEFT, padx=5)
+
+    # Button commands
+    buttons = (start_btn, stop_btn, kill_btn)
+    start_btn.config(command=lambda: start_service(launcher, log_fn, log_widget, buttons))
+    stop_btn.config(command=lambda: stop_service(launcher, log_fn))
+    kill_btn.config(command=lambda: kill_service(launcher, log_fn))
+    clear_btn.config(command=lambda: clear_log(log_widget))
     
-    # --- START FIX: Cleanup old container before starting ---
-    log_fn("🧹 Cleaning up any stale 'openhands-app' containers...")
-    try:
-        # This runs 'docker rm -f openhands-app' silently
-        subprocess.run(
-            ["docker", "rm", "-f", "openhands-app"], 
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL,
-            check=False # Don't crash if container doesn't exist
-        )
-        log_fn("✅ Cleanup complete.")
-    except Exception as e:
-        log_fn(f"⚠️ Warning: Container cleanup failed: {e}")
-    # --- END FIX ---
-
-    command = "uvx --python 3.12 openhands serve"
+    # --- Right Frame (System Monitor) ---
+    monitor_frame = create_monitor_frame(tab, TAB_TITLE, launcher)
+    monitor_frame.grid(row=0, column=1, sticky="new")
     
-    start_btn.configure(state=tk.DISABLED)
-    stop_btn.configure(state=tk.NORMAL)
-    kill_btn.configure(state=tk.NORMAL)
-    run_command(launcher, "OpenHands", command, log_fn, widget, start_btn,
-                stop_btn, kill_btn)
-
-def stop_openhands(launcher, log_fn):
-    """Stop OpenHands gracefully"""
-    
-    # Optional: Also ensure the container is killed on stop
-    try:
-        subprocess.run(["docker", "rm", "-f", "openhands-app"], 
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-    if "OpenHands" in launcher.processes:
-        log_fn("Sending SIGTERM (graceful shutdown)...")
-        try:
-            os.killpg(os.getpgid(launcher.processes["OpenHands"].pid), signal.SIGTERM)
-        except:
-            launcher.processes["OpenHands"].terminate()
-
-def kill_openhands(launcher, log_fn):
-    """Force kill OpenHands"""
-    
-    # Optional: Force kill the container directly here too
-    try:
-        subprocess.run(["docker", "rm", "-f", "openhands-app"], 
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-    if "OpenHands" in launcher.processes:
-        log_fn("⚠️ FORCE KILLING PROCESS...")
-        try:
-            os.killpg(os.getpgid(launcher.processes["OpenHands"].pid), signal.SIGKILL)
-        except:
-            launcher.processes["OpenHands"].kill()
+    log_fn("OpenHands tab initialized and ready.")
