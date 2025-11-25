@@ -237,17 +237,23 @@ class Navigation(ttk.Frame):
         self.controller = GnomeWorkspaceController(launcher, self)
         self.workspace_widgets = {}  # Store widgets for reuse
         self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)  # Make scrollable area expand
         
         header_frame = ttk.Frame(self)
         header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         header_frame.grid_columnconfigure(0, weight=1)
         
-        ttk.Label(header_frame, text=PANEL_TITLE, font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(header_frame, text=PANEL_TITLE, font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w", columnspan=2)
         
-        set_names_button = ttk.Button(header_frame, text="Set Names", command=self.controller.set_custom_workspace_names)
-        set_names_button.grid(row=0, column=1, sticky="e", padx=5)
+        button_frame = ttk.Frame(header_frame)
+        button_frame.grid(row=1, column=0, sticky="ew", pady=(5, 0), columnspan=2)
+        button_frame.grid_columnconfigure(0, weight=1)
+        button_frame.grid_columnconfigure(1, weight=1)
+        
+        set_names_button = ttk.Button(button_frame, text="Set Names", command=self.controller.set_custom_workspace_names)
+        set_names_button.grid(row=0, column=0, sticky="ew", padx=(0, 2))
 
-        ttk.Button(header_frame, text="🔄", width=3, command=self.update_workspaces).grid(row=0, column=2, sticky="e")
+        ttk.Button(button_frame, text="🔄 Refresh", command=self.update_workspaces).grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
         # Scrollable frame for workspaces
         canvas = tk.Canvas(self, highlightthickness=0)
@@ -259,13 +265,18 @@ class Navigation(ttk.Frame):
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
         
-        canvas.create_window((0, 0), window=self.workspace_frame, anchor="nw")
+        canvas_window = canvas.create_window((0, 0), window=self.workspace_frame, anchor="nw")
+        
+        # Make canvas content stretch to canvas width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind("<Configure>", on_canvas_configure)
+        
         canvas.configure(yscrollcommand=scrollbar.set)
         
         canvas.grid(row=1, column=0, sticky="nsew")
         scrollbar.grid(row=1, column=1, sticky="ns")
         
-        self.grid_rowconfigure(1, weight=1)
         self.workspace_frame.grid_columnconfigure(0, weight=1)
 
         if self.controller.method != "none": self.update_workspaces()
