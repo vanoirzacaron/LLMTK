@@ -19,6 +19,7 @@ class LLMLauncher:
 
     # --- Tab Ordering System ---
     TAB_ORDER = {
+    "vm_watch": 11,
         "vllm": 10,
         "process_monitor": 5,
     }
@@ -26,7 +27,7 @@ class LLMLauncher:
     def __init__(self, root):
         self.root = root
         self.root.title("LLM Services Launcher")
-        self.root.geometry("1200x800")
+        self.root.geometry("1146x1411")
         self.root.resizable(True, True)
 
         self.processes = {}
