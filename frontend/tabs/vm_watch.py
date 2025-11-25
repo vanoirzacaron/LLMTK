@@ -61,9 +61,11 @@ def create_tab(notebook, launcher):
     log_widget = create_log_widget(log_frame)
     log_widget.grid(row=0, column=0, sticky="nsew")
 
-    def log_message(message, is_realtime=False):
+    def log_message(message, is_realtime=False, silent_global=False):
+        """Log message to widget and file, optionally skip global log"""
         log_to_widget(log_widget, message, is_realtime)
-        launcher.log_to_global(TAB_TITLE, message)
+        if not silent_global:
+            launcher.log_to_global(TAB_TITLE, message)
         # Append to the persistent log file
         with open(log_filepath, "a") as f:
             f.write(message if is_realtime else f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
@@ -164,6 +166,7 @@ def update_loop(launcher, log_fn, tree, notebook):
             tree.after(500, lambda: update_loop(launcher, log_fn, tree, notebook))
 
 def list_vms(launcher, log_fn, tree):
+    """List VMs silently during periodic updates"""
     selected_id = tree.item(tree.selection()[0])['values'][0] if tree.selection() else None
 
     def on_success(output):
@@ -199,12 +202,18 @@ def list_vms(launcher, log_fn, tree):
         elif tree.selection():
             tree.event_generate("<<TreeviewSelect>>")
 
-    run_command(launcher, SERVICE_ID, 'virsh list --all', log_fn, tree, 
+    def silent_log(msg, is_realtime=False):
+        """Silent logger that doesn't spam the global log"""
+        pass
+
+    # Use silent logging for periodic updates
+    run_command(launcher, SERVICE_ID, 'virsh list --all', silent_log, tree, 
                 on_success=on_success, 
                 on_error=lambda e: log_fn(f"Error listing VMs: {e}"),
                 capture_output=True)
 
 def vm_action(launcher, log_fn, tree, command_template):
+    """Execute VM action with full logging"""
     if not tree.selection(): return
     vm_name = tree.item(tree.selection()[0])['values'][1]
     command = command_template.format(vm_name=vm_name)
@@ -214,6 +223,7 @@ def vm_action(launcher, log_fn, tree, command_template):
                 on_error=lambda err: log_fn(err))
 
 def launch_or_focus_vm(launcher, log_fn, tree):
+    """Launch or focus VM window"""
     if not tree.selection(): return
     item = tree.item(tree.selection()[0])
     vm_name, is_launched = item['values'][1], item['values'][3] == "Yes"
