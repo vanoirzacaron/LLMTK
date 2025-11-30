@@ -1,3 +1,22 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 **/__pycache__/
+# Ignore build artifacts in sunshine
+sunshine/build/
+sunshine/CMakeCache.txt
+sunshine/CMakeFiles/
+sunshine/Makefile
+sunshine/cmake_install.cmake
+sunshine/install_manifest.txt
+sunshine/packaging
+sunshine/src
+sunshine/src_assets
+sunshine/tests
+
+# Ignore third-party compiled dependencies
+sunshine/third-party/build-deps/
+
+# Ignore Node.js/npm build artifacts (if not meant to be tracked)
+sunshine/node_modules/
+sunshine/npm_install.log
+sunshine/package-lock.jso
